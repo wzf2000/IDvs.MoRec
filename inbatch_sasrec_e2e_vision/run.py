@@ -7,7 +7,7 @@ from transformers import BeitForImageClassification, SwinForImageClassification,
 
 from parameters import parse_args
 from model import Model
-from data_utils import read_images, read_behaviors, Build_Lmdb_Dataset, Build_Id_Dataset, LMDB_Image, \
+from data_utils import read_images, read_behaviors, Build_Lmdb_Dataset, Build_Id_Dataset, Build_Lmdb_Eval_Dataset, LMDB_Image, \
     eval_model, get_itemId_embeddings, get_itemLMDB_embeddings
 from data_utils.utils import *
 import torchvision.models as models
@@ -19,13 +19,15 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.nn.init import xavier_normal_, constant_
 
+from tqdm import tqdm
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def train(args, use_modal, local_rank):
     if use_modal:
         if 'resnet' in args.CV_model_load:
-            cv_model_load = '../../pretrained_models/' + args.CV_model_load
+            cv_model_load = '../pretrained_models/' + args.CV_model_load
             if '18' in cv_model_load:
                 cv_model = models.resnet18(pretrained=False)
             elif '34' in cv_model_load:
@@ -40,18 +42,24 @@ def train(args, use_modal, local_rank):
                 cv_model = None
             cv_model.load_state_dict(torch.load(cv_model_load))
             num_fc_ftr = cv_model.fc.in_features
-            cv_model.fc = nn.Linear(num_fc_ftr, args.embedding_dim)
-            xavier_normal_(cv_model.fc.weight.data)
-            if cv_model.fc.bias is not None:
-                constant_(cv_model.fc.bias.data, 0)
+            if args.testing:
+                cv_model.fc = nn.Identity()
+            else:
+                cv_model.fc = nn.Linear(num_fc_ftr, args.embedding_dim)
+                xavier_normal_(cv_model.fc.weight.data)
+                if cv_model.fc.bias is not None:
+                    constant_(cv_model.fc.bias.data, 0)
         elif 'swin' in args.CV_model_load:
-            cv_model_load = '../../pretrained_models/' + args.CV_model_load
+            cv_model_load = '../pretrained_models/' + args.CV_model_load
             cv_model = SwinForImageClassification.from_pretrained(cv_model_load)
             num_fc_ftr = cv_model.classifier.in_features
-            cv_model.classifier = nn.Linear(num_fc_ftr, args.embedding_dim)
-            xavier_normal_(cv_model.classifier.weight.data)
-            if cv_model.classifier.bias is not None:
-                constant_(cv_model.classifier.bias.data, 0)
+            if args.testing:
+                cv_model.classifier = nn.Identity()
+            else:
+                cv_model.classifier = nn.Linear(num_fc_ftr, args.embedding_dim)
+                xavier_normal_(cv_model.classifier.weight.data)
+                if cv_model.classifier.bias is not None:
+                    constant_(cv_model.classifier.bias.data, 0)
         else:
             cv_model = None
 
@@ -72,10 +80,18 @@ def train(args, use_modal, local_rank):
 
     Log_file.info('build dataset...')
     if use_modal:
-        train_dataset = Build_Lmdb_Dataset(u2seq=users_train, item_num=item_num, max_seq_len=args.max_seq_len,
-                                           db_path=os.path.join(args.root_data_dir, args.dataset, args.lmdb_data),
-                                           item_id_to_keys=item_id_to_keys, resize=args.CV_resize,
-                                           neg_sampling_list=neg_sampling_list)
+        if not args.testing:
+            train_dataset = Build_Lmdb_Dataset(u2seq=users_train, item_num=item_num, max_seq_len=args.max_seq_len,
+                                            db_path=os.path.join(args.root_data_dir, args.dataset, args.lmdb_data),
+                                            item_id_to_keys=item_id_to_keys, resize=args.CV_resize,
+                                            neg_sampling_list=neg_sampling_list)
+        else:
+            train_dataset = Build_Id_Dataset(u2seq=users_train, item_num=item_num, max_seq_len=args.max_seq_len,
+                                         neg_sampling_list=neg_sampling_list)
+            image_dataset = Build_Lmdb_Eval_Dataset(data=np.arange(item_num + 1),
+                                                    item_id_to_keys=item_id_to_keys,
+                                                    db_path=os.path.join(args.root_data_dir, args.dataset, args.lmdb_data),
+                                                    resize=args.CV_resize)
     else:
         train_dataset = Build_Id_Dataset(u2seq=users_train, item_num=item_num, max_seq_len=args.max_seq_len,
                                          neg_sampling_list=neg_sampling_list)
@@ -92,9 +108,32 @@ def train(args, use_modal, local_rank):
     Log_file.info('build dataloader...')
     train_dl = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers,
                           worker_init_fn=worker_init_reset_seed, pin_memory=True, sampler=train_sampler)
+    if use_modal and args.testing:
+        assert cv_model is not None
+        assert 'num_fc_ftr' in locals()
+        image_dl = DataLoader(image_dataset, batch_size=256, num_workers=args.num_workers,
+                              pin_memory=True, shuffle=False)
+        cv_model.to(local_rank)
+        with torch.no_grad():
+            tensors = []
+            for data in tqdm(image_dl, desc='Getting embeddings'):
+                data = data.to(local_rank)
+                data = data.view(-1, 3, args.CV_resize, args.CV_resize)
+                if 'swin' in args.CV_model_load:
+                    tensor = cv_model(data)[0] # bs, ed
+                else:
+                    tensor = cv_model(data)
+                tensors.append(tensor)
+            tensors = torch.cat(tensors, dim=0) # data_num, ed
+            Log_file.info(f"tensors shape: {tensors.shape}")
+            Log_file.info(f"item_num: {item_num}")
+            Log_file.info(f"num_fc_ftr: {num_fc_ftr}")
 
     Log_file.info('build model...')
-    model = Model(args, item_num, use_modal, cv_model, pop_prob_list).to(local_rank)
+    if not args.testing or not use_modal:
+        model = Model(args, item_num, use_modal, cv_model, pop_prob_list).to(local_rank)
+    else:
+        model = Model(args, item_num, use_modal, cv_model, pop_prob_list, input_dim=num_fc_ftr, cv_embeddings=tensors).to(local_rank)
     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(local_rank)
 
     if 'None' not in args.load_ckpt_name:
@@ -134,9 +173,10 @@ def train(args, use_modal, local_rank):
             {'params': recsys_params, 'lr': args.lr, 'weight_decay': args.l2_weight}
         ])
 
-        Log_file.info("***** {} parameters in images, {} parameters in model *****".format(
-            len(list(model.module.cv_encoder.image_net.parameters())),
-            len(list(model.module.parameters()))))
+        if not args.testing:
+            Log_file.info("***** {} parameters in images, {} parameters in model *****".format(
+                len(list(model.module.cv_encoder.image_net.parameters())),
+                len(list(model.module.parameters()))))
 
         for children_model in optimizer.state_dict()['param_groups']:
             Log_file.info("***** {} parameters have learning rate {}, weight_decay {} *****".format(
@@ -200,7 +240,7 @@ def train(args, use_modal, local_rank):
             sample_items_id, sample_items, log_mask = data
             sample_items_id, sample_items, log_mask = \
                 sample_items_id.to(local_rank), sample_items.to(local_rank), log_mask.to(local_rank)
-            if use_modal:
+            if use_modal and not args.testing:
                 sample_items = sample_items.view(-1, 3, args.CV_resize, args.CV_resize)
             else:
                 sample_items = sample_items.view(-1)
@@ -298,7 +338,7 @@ def setup_seed(seed):
 
 if __name__ == "__main__":
     args = parse_args()
-    local_rank = args.local_rank
+    local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend='nccl')
     setup_seed(12345)
@@ -313,6 +353,12 @@ if __name__ == "__main__":
                     f'_ed_{args.embedding_dim}_bs_{args.batch_size*gpus}' \
                     f'_lr_{args.lr}_Flr_{args.fine_tune_lr}' \
                     f'_L2_{args.l2_weight}_FL2_{args.fine_tune_l2_weight}'
+        if args.testing:
+            log_paras += '_testing'
+            if args.train_emb:
+                log_paras += '_train_emb'
+            if args.enhance:
+                log_paras += '_enhance'
     else:
         is_use_modal = False
         model_load = 'id'

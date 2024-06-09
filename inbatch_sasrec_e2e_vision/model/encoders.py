@@ -3,6 +3,29 @@ import torch.nn as nn
 from .modules import TransformerEncoder
 from torch.nn.init import xavier_normal_, constant_
 
+class MLP_Layers(torch.nn.Module):
+    def __init__(self, word_embedding_dim, item_embedding_dim, layers, drop_rate):
+        super(MLP_Layers, self).__init__()
+        self.layers = [word_embedding_dim] + layers + [item_embedding_dim]
+        mlp_modules = []
+        for idx, (input_size, output_size) in enumerate(zip(self.layers[:-1], self.layers[1:])):
+            mlp_modules.append(nn.Dropout(p=drop_rate))
+            mlp_modules.append(nn.Linear(input_size, output_size))
+            mlp_modules.append(nn.BatchNorm1d(output_size))
+            mlp_modules.append(nn.GELU())
+        self.mlp_layers = nn.Sequential(*mlp_modules)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Embedding):
+            xavier_normal_(module.weight.data)
+        elif isinstance(module, nn.Linear):
+            xavier_normal_(module.weight.data)
+            if module.bias is not None:
+                constant_(module.bias.data, 0)
+
+    def forward(self, sample_items):
+        return self.mlp_layers(sample_items)
 
 class MAE_Encoder(torch.nn.Module):
     def __init__(self, image_net, item_dim):

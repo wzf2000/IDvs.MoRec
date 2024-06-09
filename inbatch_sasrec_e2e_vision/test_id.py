@@ -1,7 +1,8 @@
 import os
 
-root_data_dir = '../../'
-dataset = 'Dataset/Hm-large'
+cudas = '0,1'
+root_data_dir = '..'
+dataset = 'dataset/HM'
 behaviors = 'hm_50w_users.tsv'
 images = 'hm_50w_items.tsv'
 lmdb_data = 'hm_50w_items.lmdb'
@@ -17,26 +18,28 @@ mode = 'train'
 item_tower = 'id'
 
 epoch = 50
-load_ckpt_name = 'epoch-4.pt'
+load_ckpt_name = 'epoch-2.pt'
 
-l2_weight = 0.1
+l2_weight = 0.01
 drop_rate = 0.1
-batch_size = 256
-lr = 5e-5
+batch_size = 64
+lr = 1e-4
 embedding_dim = 2048
 
 fine_tune_lr = 0
 label_screen = '{}_bs{}_ed{}_lr{}_dp{}_wd{}_Flr{}'.format(
     item_tower, batch_size, embedding_dim, lr,
     drop_rate, l2_weight, fine_tune_lr)
-run_py = "CUDA_VISIBLE_DEVICES='0' \
-         /opt/anaconda3/bin/python  -m torch.distributed.launch --nproc_per_node 1 --master_port 1234\
+run_py = "CUDA_VISIBLE_DEVICES='{}' \
+         torchrun --nproc_per_node {} --master_port 1234\
          run_test.py --root_data_dir {}  --dataset {} --behaviors {} --images {}  --lmdb_data {}\
          --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --testing_num {}\
          --l2_weight {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\
          --CV_resize {} --CV_model_load {}  --epoch {} --freeze_paras_before {}  --fine_tune_lr {}".format(
+    cudas, len(cudas.split(',')),
     root_data_dir, dataset, behaviors, images, lmdb_data,
     mode, item_tower, load_ckpt_name, label_screen, logging_num, testing_num,
     l2_weight, drop_rate, batch_size, lr, embedding_dim,
     CV_resize, CV_model_load, epoch, freeze_paras_before, fine_tune_lr)
+print(run_py)
 os.system(run_py)

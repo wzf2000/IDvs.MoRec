@@ -44,7 +44,10 @@ def parse_args():
     parser.add_argument("--label_screen", type=str, default='None')
     parser.add_argument("--logging_num", type=int, default=8)
     parser.add_argument("--testing_num", type=int, default=1)
-    parser.add_argument("--local_rank", default=-1, type=int)
+    # store_true
+    parser.add_argument("--testing", action='store_true')
+    parser.add_argument("--train_emb", action='store_true')
+    parser.add_argument("--enhance", action='store_true')
 
     args = parser.parse_args()
 

@@ -63,9 +63,13 @@ def get_itemId_embeddings(model, item_num, test_batch_size, args, local_rank):
 
 def get_itemLMDB_embeddings(model, item_num, item_id_to_keys, lmdb_data, test_batch_size, args, local_rank):
     model.eval()
-    item_dataset = Build_Lmdb_Eval_Dataset(data=np.arange(item_num + 1), item_id_to_keys=item_id_to_keys,
-                                           db_path=os.path.join(args.root_data_dir, args.dataset, lmdb_data),
-                                           resize=args.CV_resize)
+    if args.testing:
+        item_dataset = Build_Id_Eval_Dataset(data=np.arange(item_num + 1))
+    else:
+        item_dataset = Build_Lmdb_Eval_Dataset(data=np.arange(item_num + 1),
+                                               item_id_to_keys=item_id_to_keys,
+                                               db_path=os.path.join(args.root_data_dir, args.dataset, lmdb_data),
+                                               resize=args.CV_resize)
     item_dataloader = DataLoader(item_dataset, batch_size=test_batch_size,
                                  num_workers=args.num_workers, pin_memory=True)
     item_embeddings = []

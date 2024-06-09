@@ -1,17 +1,19 @@
 import os
 
-root_data_dir = '../../'
-dataset = 'Dataset/Hm-large'
+cudas = '2,3'
+root_data_dir = '..'
+dataset = 'dataset/HM'
 behaviors = 'hm_50w_users.tsv'
 images = 'hm_50w_items.tsv'
 lmdb_data = 'hm_50w_items.lmdb'
 logging_num = 4
 testing_num = 1
+train_emb = False
+enhance = True
 
 CV_resize = 224
 CV_model_load = 'swin_tiny'
 freeze_paras_before = 0
-
 
 
 mode = 'test'
@@ -21,8 +23,8 @@ epoch = 50
 load_ckpt_name = 'epoch-16.pt'
 
 drop_rate_list = [0.1]
-batch_size_list = [256]
-embedding_dim_list = [512]
+batch_size_list = [64]
+embedding_dim_list = [2048]
 l2_list = [(0.01, 0.01)]
 lr_list = [(1e-4, 1e-4)]
 
@@ -38,14 +40,20 @@ for l2_flr in l2_list:
                     label_screen = '{}_bs{}_ed{}_lr{}_dp{}_wd{}_Flr{}'.format(
                         item_tower, batch_size, embedding_dim, lr,
                         drop_rate, l2_weight, fine_tune_lr)
-                    run_py = "CUDA_VISIBLE_DEVICES='0' \
-                             /opt/anaconda3/bin/python  -m torch.distributed.launch --nproc_per_node 1 --master_port 1234\
+                    run_py = "CUDA_VISIBLE_DEVICES='{}' \
+                             torchrun --nproc_per_node {} --master_port 1236\
                              run_test.py --root_data_dir {}  --dataset {} --behaviors {} --images {}  --lmdb_data {}\
                              --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --testing_num {}\
                              --l2_weight {} --fine_tune_l2_weight {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\
-                             --CV_resize {} --CV_model_load {}  --epoch {} --freeze_paras_before {}  --fine_tune_lr {}".format(
+                             --CV_resize {} --CV_model_load {}  --epoch {} --freeze_paras_before {}  --fine_tune_lr {} --testing".format(
+                        cudas, len(cudas.split(',')),
                         root_data_dir, dataset, behaviors, images, lmdb_data,
                         mode, item_tower, load_ckpt_name, label_screen, logging_num, testing_num,
                         l2_weight, fine_tune_l2_weight, drop_rate, batch_size, lr, embedding_dim,
                         CV_resize, CV_model_load, epoch, freeze_paras_before, fine_tune_lr)
+                    if train_emb:
+                        run_py += ' --train_emb'
+                    if enhance:
+                        run_py += ' --enhance'
+                    print(run_py)
                     os.system(run_py)

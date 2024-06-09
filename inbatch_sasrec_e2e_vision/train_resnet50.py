@@ -1,6 +1,6 @@
 import os
 
-cudas = '3'
+cudas = '0'
 root_data_dir = '..'
 dataset = 'dataset/HM'
 behaviors = 'hm_50w_users.tsv'
@@ -8,12 +8,12 @@ images = 'hm_50w_items.tsv'
 lmdb_data = 'hm_50w_items.lmdb'
 logging_num = 4
 testing_num = 1
-testing = False
+testing = True
 train_emb = False
-enhance = False
+enhance = True
 
 CV_resize = 224
-CV_model_load = 'swin_tiny'
+CV_model_load = 'resnet50-19c8e357.pth'
 freeze_paras_before = 0
 
 
@@ -42,7 +42,7 @@ for l2_flr in l2_list:
                         item_tower, batch_size, embedding_dim, lr,
                         drop_rate, l2_weight, fine_tune_lr)
                     run_py = "CUDA_VISIBLE_DEVICES='{}' \
-                             torchrun --nproc_per_node {} --master_port 1236\
+                             torchrun --nproc_per_node {} --master_port 1234\
                              run.py --root_data_dir {}  --dataset {} --behaviors {} --images {}  --lmdb_data {}\
                              --mode {} --item_tower {} --load_ckpt_name {} --label_screen {} --logging_num {} --testing_num {}\
                              --l2_weight {} --fine_tune_l2_weight {} --drop_rate {} --batch_size {} --lr {} --embedding_dim {}\

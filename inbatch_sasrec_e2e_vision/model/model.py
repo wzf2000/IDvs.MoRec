@@ -1,11 +1,11 @@
 import torch
 from torch import nn
 from torch.nn.init import xavier_normal_
-from .encoders import Resnet_Encoder, Vit_Encoder, User_Encoder, MAE_Encoder
+from .encoders import Resnet_Encoder, Vit_Encoder, User_Encoder, MAE_Encoder, MLP_Layers
 
 
 class Model(torch.nn.Module):
-    def __init__(self, args, item_num, use_modal, image_net, pop_prob_list):
+    def __init__(self, args, item_num, use_modal, image_net, pop_prob_list, input_dim: int | None = None, cv_embeddings: torch.Tensor | None = None):
         super(Model, self).__init__()
         self.args = args
         self.use_modal = use_modal
@@ -21,12 +21,26 @@ class Model(torch.nn.Module):
             n_layers=args.transformer_block)
 
         if self.use_modal:
-            if 'resnet' in args.CV_model_load:
-                self.cv_encoder = Resnet_Encoder(image_net=image_net)
-            elif 'beit' in args.CV_model_load or 'swin' in args.CV_model_load:
-                self.cv_encoder = Vit_Encoder(image_net=image_net)
-            elif 'mae' in args.CV_model_load or "checkpoint" in args.CV_model_load:
-                self.cv_encoder = MAE_Encoder(image_net=image_net, item_dim=args.embedding_dim)
+            if args.testing:
+                assert input_dim is not None
+                if input_dim <= 128:
+                    layers = [256, 512, 1024, 2048]
+                elif input_dim <= 512:
+                    layers = [1024, 1024, 2048, 2048]
+                else:
+                    layers = [2048, 2048, 2048, 2048]
+                self.cv_encoder = nn.Sequential(
+                    nn.Embedding.from_pretrained(cv_embeddings, freeze=not args.train_emb) if cv_embeddings is not None else nn.Embedding(item_num + 1, input_dim, padding_idx=0),
+                    nn.Linear(input_dim, args.embedding_dim) if not args.enhance else MLP_Layers(input_dim, args.embedding_dim, layers, args.drop_rate),
+                    nn.GELU(),
+                )
+            else:
+                if 'resnet' in args.CV_model_load:
+                    self.cv_encoder = Resnet_Encoder(image_net=image_net)
+                elif 'beit' in args.CV_model_load or 'swin' in args.CV_model_load:
+                    self.cv_encoder = Vit_Encoder(image_net=image_net)
+                elif 'mae' in args.CV_model_load or "checkpoint" in args.CV_model_load:
+                    self.cv_encoder = MAE_Encoder(image_net=image_net, item_dim=args.embedding_dim)
         else:
             self.id_embedding = nn.Embedding(item_num + 1, args.embedding_dim, padding_idx=0)
             xavier_normal_(self.id_embedding.weight.data)

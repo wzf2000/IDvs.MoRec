@@ -1,0 +1,10 @@
+dataset/HM/*.zip
+dataset/HM/**/*.jpg
+dataset/HM/*.lmdb*
+dataset/HM/*.tsv
+pretrained_models/**/*.bin
+pretrained_models/**/*.pth
+__pycache__/
+logs_*/
+log_*
+checkpoint_*/

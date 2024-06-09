@@ -25,7 +25,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def test(args, use_modal, local_rank):
     if use_modal:
         if 'resnet' in args.CV_model_load:
-            cv_model_load = '../../pretrained_models/' + args.CV_model_load
+            cv_model_load = '../pretrained_models/' + args.CV_model_load
             if '18' in cv_model_load:
                 cv_model = models.resnet18(pretrained=False)
             elif '34' in cv_model_load:
@@ -40,18 +40,24 @@ def test(args, use_modal, local_rank):
                 cv_model = None
             cv_model.load_state_dict(torch.load(cv_model_load))
             num_fc_ftr = cv_model.fc.in_features
-            cv_model.fc = nn.Linear(num_fc_ftr, args.embedding_dim)
-            xavier_normal_(cv_model.fc.weight.data)
-            if cv_model.fc.bias is not None:
-                constant_(cv_model.fc.bias.data, 0)
+            if args.testing:
+                cv_model.fc = nn.Identity()
+            else:
+                cv_model.fc = nn.Linear(num_fc_ftr, args.embedding_dim)
+                xavier_normal_(cv_model.fc.weight.data)
+                if cv_model.fc.bias is not None:
+                    constant_(cv_model.fc.bias.data, 0)
         elif 'swin' in args.CV_model_load:
-            cv_model_load = '../../pretrained_models/' + args.CV_model_load
+            cv_model_load = '../pretrained_models/' + args.CV_model_load
             cv_model = SwinForImageClassification.from_pretrained(cv_model_load)
             num_fc_ftr = cv_model.classifier.in_features
-            cv_model.classifier = nn.Linear(num_fc_ftr, args.embedding_dim)
-            xavier_normal_(cv_model.classifier.weight.data)
-            if cv_model.classifier.bias is not None:
-                constant_(cv_model.classifier.bias.data, 0)
+            if args.testing:
+                cv_model.classifier = nn.Identity()
+            else:
+                cv_model.classifier = nn.Linear(num_fc_ftr, args.embedding_dim)
+                xavier_normal_(cv_model.classifier.weight.data)
+                if cv_model.classifier.bias is not None:
+                    constant_(cv_model.classifier.bias.data, 0)
         else:
             cv_model = None
 
@@ -73,7 +79,10 @@ def test(args, use_modal, local_rank):
 
 
     Log_file.info('build model...')
-    model = Model(args, item_num, use_modal, cv_model, pop_prob_list).to(local_rank)
+    if args.testing:
+        model = Model(args, item_num, use_modal, cv_model, pop_prob_list, input_dim=num_fc_ftr).to(local_rank)
+    else:
+        model = Model(args, item_num, use_modal, cv_model, pop_prob_list).to(local_rank)
     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(local_rank)
 
     Log_file.info('load ckpt if not None...')
@@ -120,7 +129,7 @@ def setup_seed(seed):
 
 if __name__ == "__main__":
     args = parse_args()
-    local_rank = args.local_rank
+    local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend='nccl')
     setup_seed(12345)
@@ -135,6 +144,12 @@ if __name__ == "__main__":
                     f'_ed_{args.embedding_dim}_bs_{args.batch_size*gpus}' \
                     f'_lr_{args.lr}_Flr_{args.fine_tune_lr}' \
                     f'_L2_{args.l2_weight}_FL2_{args.fine_tune_l2_weight}'
+        if args.testing:
+            log_paras += '_testing'
+            if args.train_emb:
+                log_paras += '_train_emb'
+            if args.enhance:
+                log_paras += '_enhance'
     else:
         is_use_modal = False
         model_load = 'id'
